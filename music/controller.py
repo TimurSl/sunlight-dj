@@ -96,10 +96,10 @@ class MusicController:
 
         if 'entries' in info:
             # process in background
-            asyncio.create_task(self._process_background_tracks(info['entries'], interaction.guild.id, interaction))
+            asyncio.create_task(self._process_background_tracks(info['entries'], interaction.guild.id, interaction), name="play_task")
         else:
             # process in background
-            asyncio.create_task(self._process_background_tracks([info], interaction.guild.id, interaction))
+            asyncio.create_task(self._process_background_tracks([info], interaction.guild.id, interaction), name="play_task")
 
 
 
@@ -218,7 +218,7 @@ class MusicController:
         embed = discord.Embed(title="Now Playing", description=track_title_with_url)
         if thumbnail_url:
             embed.set_image(url=thumbnail_url)
-        view = PlayerView(self)
+        view = PlayerView(self, guild_music)
 
         # if user is not in voice just dont send the embed
         if interaction.user.voice is None:
@@ -245,7 +245,20 @@ class MusicController:
             guild_music.vc.stop()
             guild_music.queue.clear()
             guild_music.current_index = 0
-            await interaction.followup.send("Stopped playback.")
+            await interaction.followup.send("Stopped playback and cleared queue.")
+
+    async def cancelprocess(self, interaction: discord.Interaction):
+        guild = interaction.guild or interaction.user.guild
+
+        for task in asyncio.all_tasks():
+            if task.get_name() == "play_task":
+                task.cancel()
+
+        guild_music = self.get_guild_music(guild.id)
+        if guild_music.vc:
+            await interaction.followup.send("Stopped processing tracks.")
+        else:
+            await interaction.followup.send("Nothing to stop.")
 
     async def pause(self, interaction: discord.Interaction):
         guild = interaction.guild or interaction.user.guild
@@ -367,7 +380,16 @@ class MusicController:
             await interaction.response.defer()
 
         search_url = f"ytsearch:{query}"
-        info = await loop.run_in_executor(None, lambda: self.ytdl.extract_info(search_url, download=False))
+        try:
+            info = await loop.run_in_executor(None, lambda: self.ytdl.extract_info(search_url, download=False))
+        except yt_dlp.utils.DownloadError as e:
+            print(f"Error during search: {e}")
+            await interaction.followup.send("❌ Error during search.")
+            return
+        except yt_dlp.utils.ExtractorError as e:
+            print(f"Extractor error during search: {e}")
+            await interaction.followup.send("❌ Extractor error during search.")
+            return
 
         if not info or 'entries' not in info or len(info['entries']) == 0:
             await interaction.followup.send("❌ No results found.")
@@ -666,9 +688,20 @@ class MusicController:
 
         # View Buttons
 class PlayerView(discord.ui.View):
-    def __init__(self, controller: MusicController):
+    def __init__(self, controller: MusicController, guild_music: GuildMusic = None):
         super().__init__(timeout=None)
         self.controller = controller
+        self.guild_music = guild_music
+        if self.guild_music:
+            for item in self.children:
+                if isinstance(item, discord.ui.Button):
+                    if item.custom_id == "loop_247":
+                        item.style = discord.ButtonStyle.success if guild_music.loop247 else discord.ButtonStyle.secondary
+                    elif item.custom_id == "shuffle_queue":
+                        item.style = discord.ButtonStyle.success if guild_music.random_mode else discord.ButtonStyle.secondary
+                    elif item.custom_id == "loop_queue":
+                        item.style = discord.ButtonStyle.success if guild_music.loop_queue else discord.ButtonStyle.secondary
+
 
 
     @discord.ui.button(label="⏮️ Previous", style=discord.ButtonStyle.primary)
@@ -695,6 +728,57 @@ class PlayerView(discord.ui.View):
         await interaction.response.defer()
 
         await self.controller.stop(interaction)
+
+    @discord.ui.button(label="🔁 Loop Queue", style=discord.ButtonStyle.secondary, custom_id="loop_queue")
+    async def loop_queue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        await self.controller.toggle_loop_queue(interaction)
+
+        guild_music = self.controller.get_guild_music(interaction.guild.id)
+
+        if guild_music.loop_queue:
+            button.style = discord.ButtonStyle.success
+        else:
+            button.style = discord.ButtonStyle.secondary
+
+        await interaction.message.edit(view=self)
+
+    @discord.ui.button(label="🔀 Shuffle Queue", style=discord.ButtonStyle.secondary, custom_id="shuffle_queue")
+    async def shuffle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.controller.shuffle(interaction)
+
+        guild_music = self.controller.get_guild_music(interaction.guild.id)
+
+        if guild_music.random_mode:
+            button.style = discord.ButtonStyle.success
+        else:
+            button.style = discord.ButtonStyle.secondary
+        await interaction.message.edit(view=self)
+
+    @discord.ui.button(label="🔄 24/7 Mode", style=discord.ButtonStyle.secondary, custom_id="loop_247")
+    async def loop_247_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        await self.controller.toggle_247(interaction)
+
+        guild_music = self.controller.get_guild_music(interaction.guild.id)
+
+        if guild_music.loop247:
+            button.style = discord.ButtonStyle.success  # Зеленая кнопка, если включено
+        else:
+            button.style = discord.ButtonStyle.secondary  # Серый цвет, если выключено
+
+
+        await interaction.message.edit(view=self)
+
+    @discord.ui.button(label="✖ Cancel Processing", style=discord.ButtonStyle.gray)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        await self.controller.cancelprocess(interaction)
+
 
 
 class LoadMixPromptView(ui.View):

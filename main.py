@@ -26,6 +26,7 @@ from commands.music.removetrack import RemoveTrack
 from commands.music.forcejoin import ForceJoinCog
 from commands.music.forceleave import ForceLeaveCog
 from commands.music.playnext import PlayNext
+from commands.music.cancelprocess import CancelProcess
 
 from music.controller import MusicController
 
@@ -66,6 +67,7 @@ class CustomBot(commands.Bot):
         await bot.add_cog(ForceJoinCog(bot, controller))
         await bot.add_cog(ForceLeaveCog(bot, controller))
         await bot.add_cog(PlayNext(bot, controller))
+        await bot.add_cog(CancelProcess(bot, controller))
 
 
         print("Reloaded all modules & synced commands.")
