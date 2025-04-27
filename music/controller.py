@@ -645,6 +645,37 @@ class MusicController:
 
         await interaction.followup.send(f"🗑️ Removed **{removed_track.title} **from the queue.")
 
+    async def playnext(self, interaction: discord.Interaction, track_number: int):
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+
+        guild_music = self.get_guild_music(interaction.guild.id)
+
+        if not guild_music.queue:
+            await interaction.followup.send("❌ Queue is empty.")
+            return
+
+        if track_number < 1 or track_number > len(guild_music.queue):
+            await interaction.followup.send(
+                f"❌ Invalid track number. Must be between 1 and {len(guild_music.queue)}.")
+            return
+
+        target_index = track_number - 1
+
+        if target_index == guild_music.current_index:
+            await interaction.followup.send("❌ This track is already playing.")
+            return
+
+        track = guild_music.queue.pop(target_index)
+
+        # вставляем сразу после текущего трека
+        insert_index = guild_music.current_index + 1
+        guild_music.queue.insert(insert_index, track)
+
+        await interaction.followup.send(
+            f"✅ Moved **{track.title}** to play next (after current track)."
+        )
+
         # View Buttons
 class PlayerView(discord.ui.View):
     def __init__(self, controller: MusicController):
