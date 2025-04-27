@@ -462,6 +462,10 @@ class MusicController:
             await interaction.followup.send("⚠️ This track is already in your favorites.", ephemeral=True)
             return
 
+        if len(favorites[user_id]) + 1 > 24:
+            await interaction.followup.send("❌ You can only have 24 favorite tracks.", ephemeral=True)
+            return
+
         favorites[user_id].append({
             "title": current_track.title,
             "url": current_track.url,
@@ -482,6 +486,9 @@ class MusicController:
 
         favorites = self.load_favorites()
         user_id = str(interaction.user.id)
+        favorites_count = len(favorites.get(user_id, []))
+        orig_count = favorites_count
+        print(f"User {user_id} has {favorites_count} favorites")
 
         if user_id not in favorites:
             favorites[user_id] = []
@@ -491,14 +498,20 @@ class MusicController:
             if any(fav.get('url') == track.url for fav in favorites[user_id]):
                 continue
 
+            print(f"{favorites_count+1} favorites after adding {track.title}")
+            if favorites_count + 1 > 24:
+                await interaction.followup.send("❌ You can only have 24 favorite tracks.", ephemeral=True)
+                break
+
             favorites[user_id].append({
                 "title": track.title,
                 "url": track.url,
                 "stream_url": track.stream_url
             })
+            favorites_count += 1
 
         self.save_favorites(favorites)
-        await interaction.followup.send(f"✅ Added all tracks to your favorites.", ephemeral=True)
+        await interaction.followup.send(f"✅ Added {favorites_count - orig_count} tracks to your favorites.", ephemeral=True)
 
     async def unfav(self, interaction: discord.Interaction):
         if not interaction.response.is_done():
