@@ -331,6 +331,8 @@ class MusicController:
             await interaction.followup.send(f"⏩ {mode_used}: {guild_music.queue[guild_music.current_index].title}")
         await self._play_current(interaction)
 
+        guild_music.skip_flag = False
+
     async def toggle_247(self, interaction: discord.Interaction):
         guild_music = self.get_guild_music(interaction.guild.id)
         guild_music.loop247 = not guild_music.loop247
