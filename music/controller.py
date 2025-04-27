@@ -95,44 +95,13 @@ class MusicController:
         queue = []
 
         if 'entries' in info:
-            for entry in info['entries'][:5]:
-                if entry.get('_type') == 'url':
-                    full_entry = await loop.run_in_executor(None,
-                                                            lambda: self.ytdl.extract_info(entry['url'], download=False, process=True))
-                else:
-                    full_entry = entry
-
-                stream_url = self.get_any_audio_format(full_entry.get('formats', []))
-                if stream_url:
-                    queue.append(TrackInfo(
-                        url=full_entry.get('webpage_url', full_entry.get('url')),
-                        title=full_entry.get('title', full_entry.get('url')),
-                        stream_url=stream_url
-                    ))
-
-            # Остальные треки кидаем в фон
-            rest_entries = info['entries'][5:]
-            if rest_entries:
-                asyncio.create_task(self._process_background_tracks(rest_entries, interaction.guild.id))
+            # process in background
+            asyncio.create_task(self._process_background_tracks(info['entries'], interaction.guild.id, interaction))
         else:
-            if guild_music.vc.is_playing():
-                # in background
-                soundtrack = asyncio.create_task(self._process_background_tracks([info], interaction.guild.id, interaction))
-            else:
-                # Один трек без плейлиста
-                if info.get('_type') == 'url':
-                    full_entry = await loop.run_in_executor(None,
-                                                            lambda: self.ytdl.extract_info(info['url'], download=False,process=True))
-                else:
-                    full_entry = info
+            # process in background
+            asyncio.create_task(self._process_background_tracks([info], interaction.guild.id, interaction))
 
-                stream_url = self.get_any_audio_format(full_entry.get('formats', []))
-                if stream_url:
-                    queue.append(TrackInfo(
-                        url=full_entry.get('webpage_url', full_entry.get('url')),
-                        title=full_entry.get('title', full_entry.get('url')),
-                        stream_url=stream_url
-                    ))
+
 
         if not queue:
             return
@@ -157,11 +126,23 @@ class MusicController:
         guild_music = self.get_guild_music(guild_id)
 
         loop = asyncio.get_event_loop()
+        first_played = False
 
         for entry in entries:
             if entry.get('_type') == 'url':
-                full_entry = await loop.run_in_executor(None,
-                                                        lambda: self.ytdl.extract_info(entry['url'], download=False, process=True))
+                try:
+                    # Сначала пробуем получить информацию о треке
+                    full_entry = await loop.run_in_executor(None,
+                                                            lambda: self.ytdl.extract_info(entry['url'], download=False, process=True))
+                except Exception as e:
+                    print(f"Error extracting info for {entry['url']}: {e}")
+                    if interaction:
+                        if not interaction.response.is_done():
+                            await interaction.response.send_message(f"❌ Error extracting info for {entry['url']}.")
+                        else:
+                            await interaction.followup.send(f"❌ Error extracting info for {entry['url']}.")
+
+                    continue
             else:
                 full_entry = entry
 
@@ -175,8 +156,15 @@ class MusicController:
 
             await asyncio.sleep(0.1)
 
+            if not guild_music.vc.is_playing() and not guild_music.vc.is_paused() and not first_played:
+                await self._play_current(interaction)
+                first_played = True
+
         if interaction:
             await interaction.followup.send(f"Added {len(entries)} track(s) to the queue.")
+
+        if not guild_music.vc.is_playing() and not guild_music.vc.is_paused():
+            await self._play_current(interaction)
 
     def get_any_audio_format(self, formats):
         for f in formats:
@@ -718,12 +706,22 @@ class LoadMixPromptView(ui.View):
     @ui.button(label="✅ Load Mix", style=discord.ButtonStyle.success)
     async def load_mix(self, interaction: discord.Interaction, button: ui.Button):
         await self.controller.loadmix(self.interaction)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("✅ Mix loaded.", ephemeral=True)
+        else:
+            await interaction.followup.send("✅ Mix loaded.", ephemeral=True)
         self.stop()
 
     @ui.button(label="❌ No", style=discord.ButtonStyle.danger)
     async def no_mix(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.edit_message(view=None)  # Удаляем кнопки после ответа
-        await interaction.response.send_message("❌ Mix load canceled.", ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ Mix load canceled.", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Mix load canceled.", ephemeral=True)
+
         self.stop()
 
 
