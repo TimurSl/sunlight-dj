@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ext.commands import has_permissions
 
-from common.checks.permission_checks import is_moderator, is_music_user
+from common.checks.permission_checks import is_moderator, is_music_user, is_app_moderator, is_app_music_user
 
 
 class ForceLeaveCog(commands.Cog):
@@ -11,8 +11,8 @@ class ForceLeaveCog(commands.Cog):
         self.bot = bot
         self.controller = controller
 
-    @commands.hybrid_command(name="forceleave", description="Bot leaves your voice channel (forcefully)")
-    @commands.check_any(is_moderator(), is_music_user())
+    @app_commands.command(name="forceleave", description="Bot leaves your voice channel (forcefully)")
+    @is_app_music_user()
     async def forceleave(self, interaction: discord.Interaction):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)

@@ -1,3 +1,5 @@
+import discord
+from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 import os
@@ -20,3 +22,17 @@ def is_music_user():
             return True
         return MUSIC_USER_ROLE_ID in [r.id for r in ctx.author.roles]
     return commands.check(predicate)
+
+def is_app_moderator():
+    async def predicate(interaction: discord.Interaction):
+        if interaction.user.guild_permissions.administrator:
+            return True
+        return MODERATOR_ROLE_ID in [r.id for r in interaction.user.roles]
+    return app_commands.check(predicate)
+
+def is_app_music_user():
+    async def predicate(interaction: discord.Interaction):
+        if interaction.user.guild_permissions.administrator:
+            return True
+        return MUSIC_USER_ROLE_ID in [r.id for r in interaction.user.roles]
+    return app_commands.check(predicate)
