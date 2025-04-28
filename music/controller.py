@@ -34,6 +34,7 @@ class GuildMusic:
         self.skip_flag = False
         self.user_who_added_id = None # ID of the user who invited bot to voice
         self.play_lock = asyncio.Lock()
+        self.last_channel = None  # Last channel the bot was connected to
 
 
 class MusicController:
