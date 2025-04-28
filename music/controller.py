@@ -187,6 +187,48 @@ class MusicController:
 
         try:
             track.stream_url = await self.try_to_update_url(track)
+
+            if guild_music.vc.is_playing() or guild_music.vc.is_paused():
+                guild_music.vc.stop()
+                for _ in range(10):
+                    await asyncio.sleep(0.2)
+                    if not guild_music.vc.is_playing():
+                        break
+                else:
+                    print("[WARNING] Voice Client did not stop in time.")
+
+            source = discord.FFmpegPCMAudio(track.stream_url, **self.FFMPEG_OPTIONS)
+
+            def after_play(e):
+                if not ignore_stop:
+                    self.bot.loop.create_task(self._after_track(interaction))
+
+            guild_music.vc.play(source, after=after_play)
+
+            # load up track image link
+            if track.url.startswith("https://www.youtube.com/watch?v="):
+                video_id = track.url.split("v=")[-1]
+                thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+            else:
+                thumbnail_url = None
+            # send embed with thumbnail
+
+            track_title_with_url = f"[{track.title}]({track.url})"
+            embed = discord.Embed(title="Now Playing", description=track_title_with_url)
+            if thumbnail_url:
+                embed.set_image(url=thumbnail_url)
+            view = PlayerView(self, guild_music)
+
+            # if voice is empty and 24/7 is disabled — disconnect
+            if guild_music.vc.channel.members == 1 and not guild_music.loop247:
+                await guild_music.vc.disconnect()
+                guild_music.vc = None
+                guild_music.queue.clear()
+                guild_music.current_index = 0
+                await interaction.followup.send("Left the voice channel.")
+                return
+            else:
+                await interaction.followup.send(embed=embed, view=view)
         except yt_dlp.utils.DownloadError as e:
             print(f"Error during track update: {e}")
             await interaction.followup.send("❌ Error during track update.")
@@ -197,48 +239,6 @@ class MusicController:
             await interaction.followup.send("❌ Unexpected error during track update.")
             await self.advance_track(guild_music, interaction, direction=1)
             return
-
-        if guild_music.vc.is_playing() or guild_music.vc.is_paused():
-            guild_music.vc.stop()
-            for _ in range(10):
-                await asyncio.sleep(0.2)
-                if not guild_music.vc.is_playing():
-                    break
-            else:
-                print("[WARNING] Voice Client did not stop in time.")
-
-        source = discord.FFmpegPCMAudio(track.stream_url, **self.FFMPEG_OPTIONS)
-
-        def after_play(e):
-            if not ignore_stop:
-                self.bot.loop.create_task(self._after_track(interaction))
-
-        guild_music.vc.play(source, after=after_play)
-
-        # load up track image link
-        if track.url.startswith("https://www.youtube.com/watch?v="):
-            video_id = track.url.split("v=")[-1]
-            thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-        else:
-            thumbnail_url = None
-        # send embed with thumbnail
-
-        track_title_with_url = f"[{track.title}]({track.url})"
-        embed = discord.Embed(title="Now Playing", description=track_title_with_url)
-        if thumbnail_url:
-            embed.set_image(url=thumbnail_url)
-        view = PlayerView(self, guild_music)
-
-        # if voice is empty and 24/7 is disabled — disconnect
-        if guild_music.vc.channel.members == 1 and not guild_music.loop247:
-            await guild_music.vc.disconnect()
-            guild_music.vc = None
-            guild_music.queue.clear()
-            guild_music.current_index = 0
-            await interaction.followup.send("Left the voice channel.")
-            return
-        else:
-            await interaction.followup.send(embed=embed, view=view)
 
     async def try_to_update_url(self, track) -> str:
         if track.stream_url.endswith('.m3u8'):
