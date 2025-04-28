@@ -33,6 +33,7 @@ class GuildMusic:
         self.vc = None
         self.skip_flag = False
         self.user_who_added_id = None # ID of the user who invited bot to voice
+        self.play_lock = asyncio.Lock()
 
 
 class MusicController:
@@ -176,27 +177,23 @@ class MusicController:
         guild = interaction.guild or interaction.user.guild
         guild_music = self.get_guild_music(guild.id)
 
-        if not interaction.user.voice or not interaction.user.voice.channel:
-            if not guild_music.loop247: # if 24/7 disabled dont play
-                await interaction.followup.send("You're not in a voice channel.")
+        if guild_music.vc.channel.members == 1 and not guild_music.loop247:
+            if not guild_music.loop247:
+                await interaction.followup.send("I wont play because im single here, its so sad and energy-consuming.")
                 return
 
-        # Прямо перед созданием ffmpeg player
         track = guild_music.queue[guild_music.current_index]
 
-        if track.stream_url.endswith('.m3u8'):
-            # Перезапрашиваем
-            new_info = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.ytdl.extract_info(track.url, download=False, process=True)
-            )
-            new_url = self.get_any_audio_format(new_info.get('formats', []))
-            if new_url:
-                track.stream_url = new_url
+        track.stream_url = await self.try_to_update_url(track)
 
         if guild_music.vc.is_playing() or guild_music.vc.is_paused():
             guild_music.vc.stop()
-            await asyncio.sleep(0.5)
+            for _ in range(10):
+                await asyncio.sleep(0.2)
+                if not guild_music.vc.is_playing():
+                    break
+            else:
+                print("[WARNING] Voice Client did not stop in time.")
 
         source = discord.FFmpegPCMAudio(track.stream_url, **self.FFMPEG_OPTIONS)
 
@@ -220,14 +217,27 @@ class MusicController:
             embed.set_image(url=thumbnail_url)
         view = PlayerView(self, guild_music)
 
-        # if user is not in voice just dont send the embed
-        if interaction.user.voice is None:
-            if not guild_music.loop247:
-                await guild_music.vc.disconnect(force=True)
-                return  # выходим из функции, чтобы дальше код не шёл
-            # если 24/7 включен — просто пропускаем отправку embed
+        # if voice is empty and 24/7 is disabled — disconnect
+        if guild_music.vc.channel.members == 1 and not guild_music.loop247:
+            await guild_music.vc.disconnect()
+            guild_music.vc = None
+            guild_music.queue.clear()
+            guild_music.current_index = 0
+            await interaction.followup.send("Left the voice channel.")
+            return
         else:
             await interaction.followup.send(embed=embed, view=view)
+
+    async def try_to_update_url(self, track) -> str:
+        if track.stream_url.endswith('.m3u8'):
+            # Перезапрашиваем
+            new_info = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: self.ytdl.extract_info(track.url, download=False, process=True)
+            )
+            new_url = self.get_any_audio_format(new_info.get('formats', []))
+            if new_url:
+                return new_url
 
     async def _after_track(self, interaction: discord.Interaction):
         guild_music = self.get_guild_music(interaction.guild.id)
@@ -285,53 +295,64 @@ class MusicController:
 
     async def advance_track(self, guild_music, interaction, direction: int = 1, after_track_next=False):
         mode_used = ""
-        if direction == 1:
-            if guild_music.current_index + 1 >= len(guild_music.queue):
-                if guild_music.loop247:
-                    mode_used = "Loop 24/7 (Shuffle all track and start from 1)"
-                    random.shuffle(guild_music.queue)
-                    guild_music.current_index = 0
+        if guild_music.play_lock.locked():
+            await interaction.followup.send("⏳ Please wait a few seconds before the next action.", ephemeral=True)
+            return
+        async with guild_music.play_lock:
+            if direction == 1:
+                if guild_music.current_index + 1 >= len(guild_music.queue):
+                    if guild_music.loop247:
+                        mode_used = "Loop 24/7 (Shuffle all track and start from 1)"
+                        random.shuffle(guild_music.queue)
+                        guild_music.current_index = 0
+                    elif guild_music.loop_queue:
+                        mode_used = "Loop Queue (Repeat all tracks)"
+                        guild_music.current_index = 0
+                    elif guild_music.random_mode:
+                        mode_used = "Random"
+                        guild_music.current_index = random.randint(0, len(guild_music.queue) - 1)
+                    else:
+                        mode_used = "End of Queue (Stop playback)"
+                        await interaction.followup.send("Queue ended.")
+                        return
+                else:
+                    guild_music.current_index = random.randint(0, len(guild_music.queue) - 1) if guild_music.random_mode else guild_music.current_index + 1
+                    mode_used = "Next Track" if not guild_music.random_mode else "Random Track"
+            elif direction == -1:
+                if guild_music.random_mode:
+                    mode_used = "Random Track"
+                    guild_music.current_index = random.randint(0, len(guild_music.queue) - 1)
                 elif guild_music.loop_queue:
                     mode_used = "Loop Queue (Repeat all tracks)"
+                    guild_music.current_index = len(guild_music.queue) - 1 if guild_music.current_index == 0 else guild_music.current_index - 1
+                elif guild_music.loop247:
+                    mode_used = "Loop 24/7 (Shuffle all track and start from 1)"
+                    if guild_music.current_index == 0:
+                        random.shuffle(guild_music.queue)
                     guild_music.current_index = 0
-                elif guild_music.random_mode:
-                    mode_used = "Random"
-                    guild_music.current_index = random.randint(0, len(guild_music.queue) - 1)
                 else:
-                    mode_used = "End of Queue (Stop playback)"
-                    await interaction.followup.send("Queue ended.")
-                    return
-            else:
-                guild_music.current_index = random.randint(0, len(guild_music.queue) - 1) if guild_music.random_mode else guild_music.current_index + 1
-                mode_used = "Next Track" if not guild_music.random_mode else "Random Track"
-        elif direction == -1:
-            if guild_music.random_mode:
-                mode_used = "Random Track"
-                guild_music.current_index = random.randint(0, len(guild_music.queue) - 1)
-            elif guild_music.loop_queue:
-                mode_used = "Loop Queue (Repeat all tracks)"
-                guild_music.current_index = len(guild_music.queue) - 1 if guild_music.current_index == 0 else guild_music.current_index - 1
-            elif guild_music.loop247:
-                mode_used = "Loop 24/7 (Shuffle all track and start from 1)"
-                if guild_music.current_index == 0:
-                    random.shuffle(guild_music.queue)
-                guild_music.current_index = 0
-            else:
-                if guild_music.current_index > 0:
-                    mode_used = "Previous Track"
-                    guild_music.current_index -= 1
-                else:
-                    mode_used = "First Track"
-                    guild_music.current_index = 0  # Stay at 0 if nothing else
+                    if guild_music.current_index > 0:
+                        mode_used = "Previous Track"
+                        guild_music.current_index -= 1
+                    else:
+                        mode_used = "First Track"
+                        guild_music.current_index = 0  # Stay at 0 if nothing else
 
-        guild_music.skip_flag = not after_track_next
-        guild_music.vc.stop()
-        await asyncio.sleep(0.5)
-        if interaction.user.voice is not None:
+            guild_music.skip_flag = not after_track_next
+            if guild_music.vc.is_playing() or guild_music.vc.is_paused():
+                guild_music.vc.stop()
+                for _ in range(10):
+                    await asyncio.sleep(0.2)
+                    if not guild_music.vc.is_playing():
+                        break
+                else:
+                    print("[WARNING] Voice Client did not stop in time.")
+
+            await self._play_current(interaction)
+
             await interaction.followup.send(f"⏩ {mode_used}: {guild_music.queue[guild_music.current_index].title}")
-        await self._play_current(interaction)
 
-        guild_music.skip_flag = False
+            guild_music.skip_flag = False
 
     async def toggle_247(self, interaction: discord.Interaction):
         guild_music = self.get_guild_music(interaction.guild.id)
@@ -701,6 +722,27 @@ class MusicController:
             f"✅ Moved **{track.title}** to play next (after current track)."
         )
 
+    # move channel listener
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member, before, after):
+        if member.bot:
+            return
+
+        guild_music = self.get_guild_music(member.guild.id)
+        if guild_music.vc and guild_music.vc.is_connected():
+            if guild_music.vc.channel == before.channel:
+                if after.channel and after.channel != before.channel:
+                    await guild_music.vc.move_to(after.channel)
+                    guild_music.user_who_added_id = member.id
+                    await member.send(f"✅ Moved to {after.channel.name}.")
+                elif not after.channel:
+                    if guild_music.user_who_added_id != member.id:
+                        await guild_music.vc.disconnect()
+                        guild_music.vc = None
+                        guild_music.queue.clear()
+                        guild_music.current_index = 0
+                        await member.send("❌ Left the voice channel.")
+
         # View Buttons
 class PlayerView(discord.ui.View):
     def __init__(self, controller: MusicController, guild_music: GuildMusic = None):
@@ -804,6 +846,9 @@ class LoadMixPromptView(ui.View):
 
     @ui.button(label="✅ Load Mix", style=discord.ButtonStyle.success)
     async def load_mix(self, interaction: discord.Interaction, button: ui.Button):
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+
         await self.controller.loadmix(self.interaction)
         if not interaction.response.is_done():
             await interaction.response.send_message("✅ Mix loaded.", ephemeral=True)
