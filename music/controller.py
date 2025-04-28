@@ -241,6 +241,20 @@ class MusicController:
 
     async def _after_track(self, interaction: discord.Interaction):
         guild_music = self.get_guild_music(interaction.guild.id)
+
+        if guild_music.vc is None or not guild_music.vc.is_connected():
+            # Попробовать восстановить соединение
+            if hasattr(guild_music, 'last_channel') and guild_music.last_channel:
+                try:
+                    guild_music.vc = await guild_music.last_channel.connect()
+                    print("[Info] Successfully reconnected to voice channel.")
+                except Exception as e:
+                    print(f"[Error] Failed to reconnect to voice: {e}")
+                    return  # Не удалось переподключиться — дальше не продолжаем
+            else:
+                print("[Warning] No last_channel info to reconnect.")
+                return
+
         if guild_music.skip_flag:
             guild_music.skip_flag = False
             return
@@ -564,6 +578,7 @@ class MusicController:
         channel = interaction.user.voice.channel
         if not guild_music.vc or not guild_music.vc.is_connected():
             guild_music.vc = await channel.connect()
+            guild_music.last_channel = channel
             guild_music.user_who_added_id = interaction.user.id
 
             # 💥 Тут после подключения - проверка на наличие микса
@@ -576,6 +591,7 @@ class MusicController:
         else:
             if force:
                 await guild_music.vc.move_to(channel)
+                guild_music.last_channel = channel
                 await interaction.followup.send(f"✅ Moved to {channel.name}.")
                 guild_music.user_who_added_id = interaction.user.id
             elif guild_music.vc.channel == channel:
