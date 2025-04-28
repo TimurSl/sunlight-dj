@@ -232,12 +232,12 @@ class MusicController:
         except yt_dlp.utils.DownloadError as e:
             print(f"Error during track update: {e}")
             await interaction.followup.send("❌ Error during track update.")
-            await self.advance_track(guild_music, interaction, direction=1)
+            await self.skipto(interaction, guild_music.current_index + 1)
             return
         except Exception as e:
             print(f"Unexpected error during track update: {e}")
             await interaction.followup.send("❌ Unexpected error during track update.")
-            await self.advance_track(guild_music, interaction, direction=1)
+            await self.skipto(interaction, guild_music.current_index + 1)
             return
 
     async def try_to_update_url(self, track) -> str:
