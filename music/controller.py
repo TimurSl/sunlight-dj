@@ -185,7 +185,18 @@ class MusicController:
 
         track = guild_music.queue[guild_music.current_index]
 
-        track.stream_url = await self.try_to_update_url(track)
+        try:
+            track.stream_url = await self.try_to_update_url(track)
+        except yt_dlp.utils.DownloadError as e:
+            print(f"Error during track update: {e}")
+            await interaction.followup.send("❌ Error during track update.")
+            await self.advance_track(guild_music, interaction, direction=1)
+            return
+        except Exception as e:
+            print(f"Unexpected error during track update: {e}")
+            await interaction.followup.send("❌ Unexpected error during track update.")
+            await self.advance_track(guild_music, interaction, direction=1)
+            return
 
         if guild_music.vc.is_playing() or guild_music.vc.is_paused():
             guild_music.vc.stop()
